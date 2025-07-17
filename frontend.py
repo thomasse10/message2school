@@ -115,7 +115,7 @@ def check_send_button(*args):
 message_var.trace_add("write", check_send_button)
 
 # --- Socket connection ---
-HOST = '192.168.68.159'
+HOST = '146.198.44.9'
 PORT = 5050
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
