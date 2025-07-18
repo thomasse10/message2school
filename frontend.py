@@ -4,7 +4,7 @@ import socket
 import threading
 import time
 
-# --- Prompt for username ---
+# --- Username prompt ---
 root = tk.Tk()
 root.withdraw()
 username = simpledialog.askstring("Username", "Enter your username:")
@@ -12,12 +12,10 @@ if not username:
     username = "Anonymous"
 root.deiconify()
 
-# --- Window Setup ---
+# --- GUI Setup ---
 root.title(f"Chat - {username}")
 root.geometry("450x600")
 root.minsize(400, 550)
-
-# --- Fonts and Colors ---
 FONT_MSG = ("Arial", 10)
 FONT_TIME = ("Arial", 7, "italic")
 COLOR_BG = "#f5f5f5"
@@ -26,28 +24,19 @@ COLOR_OTHER = "#ffffff"
 COLOR_SEND_BTN = "#4caf50"
 COLOR_SEND_BTN_ACTIVE = "#45a049"
 COLOR_SEND_BTN_DISABLED = "#a5d6a7"
-
 root.configure(bg=COLOR_BG)
 
-# --- Style Setup for ttk ---
 style = ttk.Style()
 style.theme_use('default')
-style.configure('Send.TButton',
-                foreground='white',
-                background=COLOR_SEND_BTN,
-                font=FONT_MSG,
-                padding=6)
+style.configure('Send.TButton', foreground='white', background=COLOR_SEND_BTN, font=FONT_MSG, padding=6)
 style.map('Send.TButton',
-          background=[('disabled', COLOR_SEND_BTN_DISABLED),
-                      ('active', COLOR_SEND_BTN_ACTIVE)],
-          foreground=[('disabled', 'white'),
-                      ('active', 'white')])
+          background=[('disabled', COLOR_SEND_BTN_DISABLED), ('active', COLOR_SEND_BTN_ACTIVE)],
+          foreground=[('disabled', 'white'), ('active', 'white')])
 
-# --- Chat display area ---
+# --- Chat area ---
 canvas = tk.Canvas(root, bg=COLOR_BG, highlightthickness=0)
 scrollbar = tk.Scrollbar(root, command=canvas.yview)
 scrollable_frame = tk.Frame(canvas, bg=COLOR_BG)
-
 scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
 canvas.configure(yscrollcommand=scrollbar.set)
@@ -56,7 +45,7 @@ scrollbar.grid(row=0, column=1, sticky="ns")
 root.grid_rowconfigure(0, weight=1)
 root.grid_columnconfigure(0, weight=1)
 
-# --- Input Area ---
+# --- Input ---
 input_frame = tk.Frame(root, bg=COLOR_BG)
 input_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
 input_frame.grid_columnconfigure(0, weight=1)
@@ -82,9 +71,8 @@ message_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
 send_button = ttk.Button(input_frame, text="Send", style='Send.TButton', state=tk.DISABLED)
 send_button.grid(row=0, column=1)
 
-# --- Invisible secret button setup ---
+# --- Secret admin button ---
 secret_click_count = 0
-
 def secret_button_clicked():
     global secret_click_count
     secret_click_count += 1
@@ -98,31 +86,29 @@ def secret_button_clicked():
             except:
                 add_message("[ADMIN] Failed to send admin command.")
 
-# Invisible clickable area (15x15 px) in bottom-left corner
 secret_button = tk.Button(root, text="", bg=COLOR_BG, activebackground=COLOR_BG,
                           borderwidth=0, highlightthickness=0, relief="flat",
                           command=secret_button_clicked)
 secret_button.place(relx=0.3, rely=1.0, anchor="sw", width=15, height=10)
 
-# --- Enable/disable send button ---
+# --- Send button enable ---
 def check_send_button(*args):
     msg = message_var.get().strip()
     if msg and msg != "Type your message here...":
         send_button.state(['!disabled'])
     else:
         send_button.state(['disabled'])
-
 message_var.trace_add("write", check_send_button)
 
-# --- Socket connection ---
-HOST = '146.198.44.9'
+# --- Networking setup ---
+HOST = '127.0.0.1'  # Change to server IP
 PORT = 5050
-
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((HOST, PORT))
+client.settimeout(1)
 client.send(username.encode('utf-8'))
 
-# --- Add message to chat ---
+# --- Message display ---
 def add_message(text, from_self=False):
     bubble = tk.Frame(scrollable_frame,
                       bg=COLOR_SELF if from_self else COLOR_OTHER,
@@ -137,15 +123,15 @@ def add_message(text, from_self=False):
     bubble.pack(fill="x", pady=2, padx=10, anchor="e" if from_self else "w")
     root.after(100, lambda: canvas.yview_moveto(1.0))
 
-# --- Send message ---
+# --- Send logic ---
 def send_message(event=None):
     msg = message_var.get().strip()
     if msg and msg != "Type your message here...":
         add_message(f"You: {msg}", from_self=True)
         try:
             client.send(msg.encode("utf-8"))
-        except:
-            add_message("Failed to send message. Connection issue.", from_self=True)
+        except Exception as e:
+            add_message(f"[ERROR] Could not send: {e}", from_self=True)
         message_entry.delete(0, tk.END)
         check_send_button()
 
@@ -157,15 +143,26 @@ def receive_messages():
     while True:
         try:
             msg = client.recv(1024).decode("utf-8")
-            if msg and not msg.startswith(f"{username}:"):
-                add_message(msg)
-        except:
+            if not msg:
+                add_message("[Disconnected from server]")
+                break
+            print(f"[RECEIVED] {msg}")
+            add_message(msg)
+        except socket.timeout:
+            continue
+        except Exception as e:
+            print(f"[RECEIVE ERROR] {e}")
+            add_message("[Connection lost]")
             break
 
 threading.Thread(target=receive_messages, daemon=True).start()
 
-# --- Clean shutdown on close ---
+# --- Close cleanup ---
 def on_close():
+    try:
+        client.shutdown(socket.SHUT_RDWR)
+    except:
+        pass
     try:
         client.close()
     except:

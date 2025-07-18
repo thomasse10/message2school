@@ -1,27 +1,42 @@
 import socket
 import threading
 
-HOST = '0.0.0.0'  # Listen on all interfaces
+HOST = '0.0.0.0'
 PORT = 5050
 
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind((HOST, PORT))
 server.listen()
 
-connected_users = {}  # Maps client socket to username
+connected_users = {}  # conn -> username
 users_lock = threading.Lock()
 
 def broadcast(message, sender_conn=None):
+    print(f"[BROADCAST] {message}")
+    to_remove = []
+
     with users_lock:
-        for conn in list(connected_users.keys()):
-            try:
-                if conn != sender_conn:
-                    conn.send(message.encode('utf-8'))
-            except:
-                # If sending fails, remove client
-                print(f"Removing client {connected_users[conn]} due to send failure")
-                conn.close()
-                del connected_users[conn]
+        recipients = list(connected_users.items())
+
+    for conn, username in recipients:
+        if conn == sender_conn:
+            continue
+        try:
+            conn.send(message.encode('utf-8'))
+        except Exception as e:
+            print(f"[ERROR] Could not send to {username}: {e}")
+            to_remove.append(conn)
+
+    if to_remove:
+        with users_lock:
+            for conn in to_remove:
+                try:
+                    conn.close()
+                except:
+                    pass
+                if conn in connected_users:
+                    print(f"[CLEANUP] Removing {connected_users[conn]}")
+                    del connected_users[conn]
 
 def handle_client(conn, addr):
     try:
@@ -29,16 +44,28 @@ def handle_client(conn, addr):
         if not username:
             conn.close()
             return
+
+        # Replace old socket with same username
         with users_lock:
+            for c, u in list(connected_users.items()):
+                if u == username:
+                    try:
+                        c.close()
+                    except:
+                        pass
+                    del connected_users[c]
             connected_users[conn] = username
-        print(f"{username} connected from {addr}")
-        broadcast(f"*** {username} connected to the chat ***", conn)
+
+        print(f"[CONNECTED] {username} from {addr}")
+        broadcast(f"*** {username} joined the chat ***", sender_conn=conn)
+
+        conn.settimeout(1.0)
 
         while True:
             try:
                 msg = conn.recv(1024)
                 if not msg:
-                    break  # Client disconnected
+                    break
                 decoded = msg.decode('utf-8')
 
                 if decoded.startswith("DISCONNECT_USER:"):
@@ -52,21 +79,21 @@ def handle_client(conn, addr):
                                     pass
                                 c.close()
                                 del connected_users[c]
-                                broadcast(f"*** {target_user} has been disconnected by admin ***")
+                                broadcast(f"*** {target_user} was disconnected by admin ***")
                                 break
-                    continue
+                else:
+                    broadcast(f"{username}: {decoded}", sender_conn=conn)
 
-                broadcast(f"{username}: {decoded}", conn)
-            except ConnectionResetError:
-                break
+            except socket.timeout:
+                continue
             except Exception as e:
-                print(f"Error receiving from {username}: {e}")
+                print(f"[ERROR] {username}: {e}")
                 break
     finally:
         with users_lock:
             if conn in connected_users:
-                print(f"{connected_users[conn]} disconnected")
-                broadcast(f"*** {connected_users[conn]} has left the chat ***", conn)
+                print(f"[DISCONNECTED] {connected_users[conn]}")
+                broadcast(f"*** {connected_users[conn]} left the chat ***", sender_conn=conn)
                 del connected_users[conn]
         try:
             conn.close()
@@ -74,11 +101,13 @@ def handle_client(conn, addr):
             pass
 
 def start_server():
-    print(f"[LISTENING] Server running on port {PORT}...")
+    print(f"[STARTING] Group chat server running on port {PORT}...")
     while True:
-        conn, addr = server.accept()
-        thread = threading.Thread(target=handle_client, args=(conn, addr))
-        thread.start()
+        try:
+            conn, addr = server.accept()
+            threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
+        except Exception as e:
+            print(f"[ERROR] Accept failed: {e}")
 
 if __name__ == "__main__":
     start_server()
